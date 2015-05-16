@@ -1,0 +1,345 @@
+Return by value
+----------------
+
+Foo getFoo()
+{
+   ... 
+   return constructFoo(...); // it's a big object
+}
+
+Non-copyable type that could be made movable
+----------------------------------------------
+
+class TCPSocket
+{
+public:
+  TCPSocket(const std::string& host, const std::string& port);
+  ~TCPSocket();
+
+  bool is_open();
+  vector<char> read(size_t to_read);
+  size_t write(vector<char> payload);
+
+  TCPSocket(const TCPSocket&) = delete
+  TCPSocket& operator = (const TCPSocket&) = delete
+
+private:
+  int socket_fd_;
+
+};
+
+
+Return by value from factory function - does not work
+--------------------------------------
+TCPSocket connectToService()
+{
+  TCPSocket sock(get_service_host(),  // function gets hostname
+                   get_service_port()); // function gets port
+  return sock;
+}
+
+auto_ptr subverted copying to move
+-------------------------------------
+
+foo(std::auto_ptr<std::string> arg)
+{
+  ....
+}
+
+std::auto_ptr<std::string> strptr(new std::string("Hello"));
+
+foo(strptr);
+strptr->length();
+
+
+Subverting TCPSocket's copy for move
+----------------------------------------
+
+TCPSocket::TCPSocket(TCPSocket& that) {
+  socket_fd_ = that.socket_fd_;
+  that.socket_fd_ = -1;
+}
+
+TCPSocket socket = connectToService();
+
+
+
+void performIO(TCPSocket socket)
+{
+  socket.write(...);
+  socket.read(...);
+  // etc.
+}
+
+TCPSocket socket = connectToService();
+performIO(socket);   // moves TCPSocket into performIO
+// now socket.socket_fd_ == -1
+performIO(socket);   // OOPs: not a valid socket
+
+
+lvalue and rvalue expressions
+-------------------------------
+
+socket ; <--- expression
+
+lvalue expression -> has an identity 
+- address can be taken with & operator)
+  
+performIO(TCPSocket(get_service_name(), 
+                   get_service_port()));
+
+rvalue expressions - !lvalue expression
+- an expression which can be moved from
+
+
+ lvalue (identity)   rvalue (can be moved from)
+              \    /
+               \  /
+                \/
+                * ?
+
+int x;
+x = 5;    // x?
+
+int arr[10];
+arr[0];  // lvalue  -  &arr[0]
+
+std::string foo();
+auto x = foo();   //  x = lvalue, foo() = rvalue
+
+std::string& foo();
+foo() = x;
+
+std::string& str = foo();  // str
+
+?? foo()
+
+"hello";   // lvalue expression const char[6] / const char*
+
+const char arr[6] = "Hello";
+
+
+
+-----
+
+const std::string& str = std::string("Hello");
+// std::string& str = std::string("Hello"); 
+
+(a + b) = str;
+
+
+foo(std::string& s) { ... }
+
+foo(const std::string& s) { ... }
+foo(std::string&& s) { ... }
+
+foo(str);                     // lvalue overload
+foo(std::string("Hello");     // rvalue
+foo("Hello");                 // rvalue
+
+
+std::string&& <--- non-const rvalue reference
+
+foo("hello");  foo(std::string("hello"));
+
+
+class TCPSocket
+{
+   ...
+
+   TCPSocket(const TCPSocket&) = delete;
+   TCPSocket(TCPSocket&&);
+}
+
+
+Move constructor
+-----------------
+
+// Move constructor
+TCPSocket::TCPSocket(TCPSocket&& that) {
+  socket_fd_ = that.socket_fd_;
+  that.socket_fd_ = -1;
+
+  doSomething();
+}
+
+Return value optimization and named return value optimization
+---------------------------------------------------------------
+TCPSocket connectToService()
+{
+  TCPSocket sock(get_service_host(),  // function gets hostname
+                   get_service_port()); // function gets port
+  return sock;    // NRVO
+}
+
+TCPSocket f = foo();
+
+&f;
+
+TCPSocket foo()
+{
+   TCPSocket sock(...);
+   TCPSocket sock1(...);
+
+   if (...) {
+     return sock;   // !nrvo
+   } else {
+     return TCPSocket(...);  // rvo 
+   }
+
+   return sock1;
+}
+
+TCPSocket connectToService()
+{
+  return TCPSocket(get_service_host(),  // function gets hostname
+                   get_service_port()); // function gets port
+}
+
+// RVO
+auto socket = connectToService();
+
+
+
+
+Writing move ctor / assignment
+------------------------------
+
+class String
+{
+public:
+  String(const char *str = 0) : buffer_(nullptr), len_(0)
+  {
+     buffer_ = dupstr(str, len_);
+  }
+
+  ~String() {
+    delete [] buffer_;
+  }
+
+private:
+  char *buffer_;
+  size_t len_;
+};
+
+String s("Hello");
+
+// dupstr returns a copy of s, allocated dynamically.
+//   Sets len to the length of s.
+char *dupstr(const char *str, size_t& len) {
+  char *ret = nullptr;
+
+  if (!str) {
+    len = 0;
+    return ret;
+  }
+  len = strlen(str);
+  ret = new char[len + 1];
+  strncpy(ret, str, len + 1);
+
+  return ret;
+}
+
+
+String(String&& that) : buffer_(nullptr), len_(0)
+{
+  std::swap(buffer_, that.buffer_);
+  std::swap(len_, that.len_);
+}
+
+String(String&& that) : buffer_(that.buffer_), len_(that.len_)
+{
+  that.buffer_ = nullptr;
+  that.len_ = 0;
+}
+
+
+String str(String("Hello"));
+
+  std::swap(buffer_, that.buffer_);
+  std::swap(len_, that.len_);
+
+
+String s("Hello");
+String s1("world");
+
+
+s = s1;           // copy assignment
+
+
+s = String("world");  // move assignment
+|
+v
+String& operator=(String&& that)
+{ /// this === s, that === String("world") 
+
+  this->swap(that);
+}
+
+
+void String::swap(String& right)    // must not throw
+{
+   std::swap(buffer_, right.buffer_);
+   std::swap(len_, right.len_);
+}
+
+-----
+
+String s("Hello");
+String s1("world");
+
+s = s1;  // s1 = String&  
+
+String(const String& that)
+{
+  // ...
+}
+
+String(String&& that)
+{
+  // ...
+}
+
+s = static_cast<String&&>(s1);
+
+s = std::move(s1);   // rvalue expression identical to the s1 object
+
+std::move(s1) -> has identity (lvalue) and can be moved from (rvalue)
+-> xvalue => expired value
+
+std::move(s1) -> static_cast<String&&>(s1);
+
+s1
+[...... ]
+
+
+
+------
+
+foo(String& s);
+foo(String&& s) {
+}
+
+foo(s1);
+foo(std::move(s1));
+s1
+
+
+String(String&& that)
+{
+  &that;   // ?
+}
+
+template <typename T>
+void foo(T&& obj)
+{
+   bar(obj);
+}
+
+template <typename T>
+void bar(T&& obj)
+{
+}
+
+String s1;
+foo(s1);
